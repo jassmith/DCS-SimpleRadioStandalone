@@ -18,6 +18,7 @@ public class WebSocketCommandHandler
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly ConcurrentDictionary<WebSocket, bool> Clients = new();
     private static readonly SemaphoreSlim SendLock = new(1, 1);
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromMilliseconds(500);
     private readonly GlobalSettingsStore _globalSettings = GlobalSettingsStore.Instance;
     private HttpListener _listener;
     private volatile bool _stop;
@@ -32,11 +33,14 @@ public class WebSocketCommandHandler
             foreach (var client in Clients.Keys)
                 try
                 {
-                    await client.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+                    //don't let a client that has stopped reading block the DCS sync loop
+                    using var timeout = new CancellationTokenSource(SendTimeout);
+                    await client.SendAsync(bytes, WebSocketMessageType.Text, true, timeout.Token);
                 }
                 catch (Exception)
                 {
                     Clients.TryRemove(client, out _);
+                    client.Abort();
                 }
         }
         finally
